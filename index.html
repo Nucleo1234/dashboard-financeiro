@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Dashboard Financeiro Profissional</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body { font-family: Arial; margin:0; background:#eef1f5; }
+header { padding:15px; background:#1f2d3d; color:#fff; }
+.header-top { display:flex; justify-content:space-between; align-items:center; }
+.header-cards { display:flex; gap:15px; margin-top:10px; }
+.card-header { background:#273849; padding:10px; border-radius:8px; text-align:center; flex:1; }
+.container { padding:20px; }
+.section { margin-bottom:25px; }
+.card { background:#fff; padding:15px; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,0.08); }
+
+/* TABELAS */
+table { width:100%; border-collapse: collapse; }
+th, td { padding:6px; font-size:12px; border:1px solid #ccc; }
+th { background:#34495e; color:#fff; }
+td { text-align:right; }
+th:first-child, td:first-child { text-align:left; }
+.desc { text-align:left !important; }
+.negativo { color:red; font-weight:bold; }
+.flex { display:flex; gap:20px; }
+.small-chart { height:250px !important; }
+
+/* FIXAR PRIMEIRA COLUNA */
+#custosTable th:first-child,
+#custosTable td:first-child {
+  position: sticky;
+  left: 0;
+  background: #fff;
+  z-index: 2;
+}
+#custosTable th:first-child {
+  background: #34495e;
+  z-index: 3;
+}
+</style>
+</head>
+<body>
+
+<header>
+<div class="header-top">
+<input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+<h2>Dashboard Financeiro Profissional</h2>
+</div>
+
+<div class="header-cards">
+<div class="card-header"><div>Total de Entradas</div><div id="totalEntradas">R$ 0</div></div>
+<div class="card-header"><div>Total de Saídas</div><div id="totalSaidas">R$ 0</div></div>
+<div class="card-header"><div>Saldo</div><div id="saldoTotal">R$ 0</div></div>
+</div>
+</header>
+
+<div class="container">
+
+<div class="section card">
+<canvas id="saldoChart" class="small-chart"></canvas>
+</div>
+
+<div class="section flex">
+<div class="card" style="width:50%"><h3>2025</h3><table id="table2025"></table></div>
+<div class="card" style="width:50%"><h3>2026</h3><table id="table2026"></table></div>
+</div>
+
+<div class="section flex">
+<div class="card" style="width:50%"><h3 id="mensalTitulo">Visão Mensal</h3><table id="mensalTable"></table></div>
+<div class="card" style="width:50%"><h3 id="diarioTitulo">Detalhes</h3><table id="diarioTable"></table></div>
+</div>
+
+<div class="section card">
+<h3>Resumo por Conta de Custo (2025 / 2026)</h3>
+<div style="overflow:auto">
+<table id="custosTable"></table>
+</div>
+</div>
+
+</div>
+
+<script>
+let rawData=[];
+let chart;
+const meses=["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+
+function parseDate(v){ if(typeof v==='number') return new Date((v-25569)*86400*1000);
+ if(typeof v==='string'){let p=v.split(/[\/\-]/); if(p.length===3) return new Date(p[2],p[1]-1,p[0]);}
+ return new Date(v); }
+
+function parseCurrency(v){ if(!v) return 0; if(typeof v==='number') return v;
+ return parseFloat(v.toString().replace(/\./g,'').replace(',','.'))||0; }
+
+function findField(o,n){ for(let k in o){let key=k.toLowerCase().trim(); for(let x of n){ if(key.includes(x)) return o[k]; }} return null; }
+
+function normalize(data){ return data.map(r=>({
+ data: parseDate(findField(r,['data'])),
+ credito: parseCurrency(findField(r,['credito','crédito'])),
+ debito: parseCurrency(findField(r,['debito','débito'])),
+ descricao: findField(r,['descrição','descricao'])
+})).filter(r=>!isNaN(r.data)); }
+
+function calcularTotais(){ let e=0,s=0;
+ rawData.forEach(r=>{e+=r.credito; s+=r.debito;});
+ document.getElementById('totalEntradas').innerText=e.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+ document.getElementById('totalSaidas').innerText=s.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+ document.getElementById('saldoTotal').innerText=(e-s).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+}
+
+function buildChart(){ let saldoAcum=0;
+ let labels=[]; let data=[];
+ rawData.sort((a,b)=>a.data-b.data).forEach(r=>{
+ saldoAcum+=r.credito-r.debito;
+ labels.push(r.data.toLocaleDateString());
+ data.push(saldoAcum);
+ });
+ if(chart) chart.destroy();
+ chart=new Chart(document.getElementById('saldoChart'),{
+ type:'line', data:{labels,datasets:[{label:'Saldo acumulado',data}]}, options:{maintainAspectRatio:false}
+ });
+}
+
+function buildCustos(){
+ let mapa={};
+ rawData.forEach(r=>{
+ let desc=r.descricao||'Sem descrição';
+ if(!mapa[desc]) mapa[desc]={meses:Array(24).fill(null), totalSaida:0};
+ let y=r.data.getFullYear();
+ let m=r.data.getMonth();
+ let valor=r.credito-r.debito;
+
+ if(y==2025){ if(mapa[desc].meses[m]===null) mapa[desc].meses[m]=0; mapa[desc].meses[m]+=valor; }
+ if(y==2026){ if(mapa[desc].meses[m+12]===null) mapa[desc].meses[m+12]=0; mapa[desc].meses[m+12]+=valor; }
+
+ mapa[desc].totalSaida += r.debito; // usado para ordenação
+ });
+
+ // ordenar por maiores saídas
+ let ordenado = Object.entries(mapa).sort((a,b)=> b[1].totalSaida - a[1].totalSaida);
+
+ let header='<tr><th>Conta</th>';
+ meses.forEach(m=>header+=`<th>${m}/25</th>`);
+ meses.forEach(m=>header+=`<th>${m}/26</th>`);
+ header+='<th>Total</th></tr>';
+
+ let rows='';
+ ordenado.forEach(([k,obj])=>{
+ let totalLinha=0;
+ rows+=`<tr><td class="desc">${k}</td>`;
+ obj.meses.forEach(v=>{
+ if(v!==null) totalLinha+=v;
+ rows+=`<td>${v===null?'':v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>`;
+ });
+ rows+=`<td><b>${totalLinha.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</b></td></tr>`;
+ });
+
+ document.getElementById('custosTable').innerHTML=header+rows;
+}
+
+function processYear(y){ let arr=Array(12).fill().map(()=>({e:0,s:0,saldo:0}));
+ rawData.forEach(r=>{if(r.data.getFullYear()==y){let m=r.data.getMonth(); arr[m].e+=r.credito; arr[m].s+=r.debito;}});
+ arr.forEach(r=>r.saldo=r.e-r.s);
+ return arr;
+}
+
+function buildYear(y,id){ let d=processYear(y);
+ let html='<tr><th>Mês</th><th>Entrada</th><th>Saída</th><th>Saldo</th></tr>';
+ d.forEach((r,i)=>{
+ let cls=r.saldo<0?'negativo':'';
+ html+=`<tr><td>${meses[i]}</td>
+<td>${r.e.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>
+<td>${r.s.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>
+<td class="${cls}"><a onclick="loadMonth(${y},${i})">${r.saldo.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</a></td></tr>`;
+ });
+ document.getElementById(id).innerHTML=html;
+}
+
+function loadMonth(y,m){ document.getElementById('diarioTable').innerHTML='';
+ let dados=rawData.filter(r=>r.data.getFullYear()==y&&r.data.getMonth()==m);
+ document.getElementById('mensalTitulo').innerText=`Visão Mensal - ${meses[m]} ${y}`;
+ let dias={};
+ dados.forEach(r=>{let d=r.data.getDate(); if(!dias[d]) dias[d]={e:0,s:0}; dias[d].e+=r.credito; dias[d].s+=r.debito;});
+ let html='<tr><th>Dia</th><th>Entrada</th><th>Saída</th><th>Saldo</th></tr>';
+ Object.keys(dias).forEach(d=>{let r=dias[d]; let saldo=r.e-r.s;
+ html+=`<tr><td>${d}</td>
+<td>${r.e.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>
+<td>${r.s.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>
+<td><a onclick="loadDay(${y},${m},${d})">${saldo.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</a></td></tr>`;
+ });
+ document.getElementById('mensalTable').innerHTML=html;
+}
+
+function loadDay(y,m,d){ let dados=rawData.filter(r=>r.data.getFullYear()==y&&r.data.getMonth()==m&&r.data.getDate()==d);
+ document.getElementById('diarioTitulo').innerText=`Detalhes - ${d}/${m+1}/${y}`;
+ let html='<tr><th>Descrição</th><th>Entrada</th><th>Saída</th><th>Saldo</th></tr>';
+ dados.forEach(r=>{let saldo=r.credito-r.debito;
+ html+=`<tr><td class="desc">${r.descricao||'-'}</td>
+<td>${r.credito.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>
+<td>${r.debito.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>
+<td>${saldo.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td></tr>`;
+ });
+ document.getElementById('diarioTable').innerHTML=html;
+}
+
+function parseFile(f){ let r=new FileReader();
+ r.onload=e=>{let wb=XLSX.read(e.target.result,{type:'binary'});
+ let sh=wb.Sheets[wb.SheetNames[0]];
+ rawData=normalize(XLSX.utils.sheet_to_json(sh,{defval:''}));
+ calcularTotais(); buildChart(); buildYear(2025,'table2025'); buildYear(2026,'table2026'); buildCustos();};
+ r.readAsBinaryString(f);
+}
+
+document.getElementById('fileInput').addEventListener('change',e=>{ if(e.target.files[0]) parseFile(e.target.files[0]);});
+</script>
+
+</body>
+</html>
